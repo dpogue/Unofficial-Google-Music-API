@@ -17,6 +17,8 @@
 #You should have received a copy of the GNU General Public License
 #along with gmusicapi.  If not, see <http://www.gnu.org/licenses/>.
 
+SERVICE_URL = 'https://www.googleapis.com/sj/v1beta1'
+
 class ModelBase(object):
     @staticmethod
     def kind():

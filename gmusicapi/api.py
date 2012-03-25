@@ -30,7 +30,6 @@ import re
 import string
 import time
 import urllib
-import exceptions
 import collections
 import copy
 
@@ -43,10 +42,18 @@ from protocol import WC_Protocol, MM_Protocol
 from utils import utils
 from utils.apilogging import UsesLog
 from gmtools import tools
+from models import *
 
+# Global flag to enable/disable Skyjam API
+gUseSkyjam = True
 
-class PlaylistModificationError(exceptions.Exception):
+class PlaylistModificationError(Exception):
     pass
+
+class SkyjamException(Exception):
+    def __init__(self, message):
+        Exception.__init__(self, message)
+        self.msg = message
 
 class Api(UsesLog):
     def __init__(self):
@@ -67,14 +74,15 @@ class Api(UsesLog):
 
 
     def login(self, email, password):
-        """Authenticates the api with the given credentials.
+        """
+        Authenticates the api with the given credentials.
         Returns True on success, False on failure.
+        If you are using two-factor authentication, you must use an application
+        password rather than your account password.
 
-        Two factor authentication is currently unsupported.
-
-        :param email: eg "`test@gmail.com`"
-        :param password: plaintext password. It will not be stored and is sent over ssl."""
-
+        :param email: Google username or email address.
+        :param password: plaintext password. It will not be stored and is sent over ssl.
+        """
         self.session.login(email, password)
 
         if self.is_authenticated():
@@ -193,26 +201,65 @@ class Api(UsesLog):
 
         library = []
 
-        lib_chunk = self._wc_call("loadalltracks")
-    
-        while 'continuationToken' in lib_chunk:
-            library += lib_chunk['playlist'] #misleading name; this is the entire chunk
-            
-            lib_chunk = self._wc_call("loadalltracks", lib_chunk['continuationToken'])
+        if gUseSkyjam:
+            tracklist = self._sj_call(Track.getFeedUrl())
 
-        library += lib_chunk['playlist']
+            while tracklist.nextPageToken is not None:
+                library += tracklist.items
+
+                #Make a request for the rest of the tracks
+                reqdata = {'start-token': tracklist.nextPageToken}
+                data = json.dumps(reqdata)
+
+                tracklist = self._sj_call(Track.getFeedAsPostUrl(), data)
+
+            library += tracklist.items
+        else:
+            lib_chunk = self._wc_call("loadalltracks")
+        
+            while 'continuationToken' in lib_chunk:
+                library += lib_chunk['playlist'] #misleading name; this is the entire chunk
+                
+                lib_chunk = self._wc_call("loadalltracks", lib_chunk['continuationToken'])
+
+            library += lib_chunk['playlist']
 
         return library
 
-    def get_playlist_songs(self, playlist_id):
+    def get_playlist_songs(self, playlist):
         """Returns a list of `song dictionaries`__, which include `playlistEntryId` keys for the given playlist.
 
-        :param playlist_id: id of the playlist to load.
+        :param playlist: id of the playlist to load or a Playlist model.
 
         __ `GM Metadata Format`_
         """
 
-        return self._wc_call("loadplaylist", playlist_id)["playlist"]
+        if gUseSkyjam:
+            entries = []
+
+            if type(playlist) is Playlist:
+                playlist_id = playlist.id
+            else:
+                playlist_id = playlist
+
+            url = '%s?plid=%s' % (PlaylistEntry.getFeedUrl(), playlist_id)
+            playlist = self._sj_call(url)
+
+            while playlist.nextPageToken is not None:
+                entries += playlist.items
+
+                # Make a request for the rest of the entries
+                reqdata = {'start-token': playlist.nextPageToken}
+                data = json.dumps(reqdata)
+
+                url = '%s?plid=%s' % (PlaylistEntry.getFeedAsPostUrl(), playlist_id)
+                playlist = self._sj_call(url, data)
+
+            entries += playlist.items
+
+            return entries
+        else:
+            return self._wc_call("loadplaylist", playlist)["playlist"]
 
     def get_playlists(self, auto=True, instant=True, user=True, always_id_lists=False):
         """Returns a dictionary mapping playlist types to dictionaries of ``{"<playlist name>": "<playlist id>"}`` pairs.
@@ -729,3 +776,35 @@ class Api(UsesLog):
         self.log.debug("mm_pb_call response: [%s]", str(res))
 
         return res
+
+    def _kind_to_model(self, kind):
+        if kind == Track.kind():
+            return Track
+        elif kind == TrackList.kind():
+            return TrackList
+        elif kind == Playlist.kind():
+            return Playlist
+        elif kind == PlaylistList.kind():
+            return PlaylistList
+        elif kind == PlaylistEntry.kind():
+            return PlaylistEntry
+        elif kind == PlaylistEntryList.kind():
+            return PlaylistEntryList
+        else:
+            raise ValueError("Unexpected SJ model kind")
+
+    def _sj_call(self, url, data=None):
+        """
+        Makes a call to the Skyjam service API.
+        Returns a model representing the data returned by the service.
+
+        :param url: The URL to request.
+        :param data: (optional) Data to be posted to the server.
+        """
+        err, resp = self.session.request(url, data)
+        if err is not None:
+            raise SkyjamException('Error code %d' % err)
+
+        jsobj = json.loads(resp)
+
+        return self._kind_to_model(jsobj['kind'])(jsobj)

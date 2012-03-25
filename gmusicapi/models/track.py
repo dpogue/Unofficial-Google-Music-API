@@ -17,7 +17,7 @@
 #You should have received a copy of the GNU General Public License
 #along with gmusicapi.  If not, see <http://www.gnu.org/licenses/>.
 
-from .base import ModelBase
+from .base import ModelBase, SERVICE_URL
 
 class Track(ModelBase):
     """
@@ -56,6 +56,22 @@ class Track(ModelBase):
     @staticmethod
     def kind():
         return 'sj#track'
+
+    @staticmethod
+    def getBatchMutationUrl():
+        return '%s/trackbatch' % SERVICE_URL
+
+    @staticmethod
+    def getFeedUrl():
+        return '%s/tracks' % SERVICE_URL
+
+    @staticmethod
+    def getFeedAsPostUrl():
+        return '%s/trackfeed' % SERVICE_URL
+
+    @staticmethod
+    def getUrl(param):
+        return '%s/tracks/%s' % (SERVICE_URL, param)
 
     def __init__(self, jsdata=None):
         self._album = None

@@ -29,14 +29,14 @@ from utils.tokenauth import TokenAuth
 
 try:
     # These are for python3 support
-    from urllib.request import HTTPCookieProcessor, Request, build_opener
+    from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
     from urllib.error import HTTPError
     from urllib.parse import urlencode, quote_plus
     from http.client import HTTPConnection, HTTPSConnection
     unistr = str
 except ImportError:
     # Fallback to python2
-    from urllib2 import HTTPCookieProcessor, Request, build_opener
+    from urllib2 import HTTPCookieProcessor, Request, build_opener, urlopen
     from urllib2 import HTTPError
     from urllib import urlencode, quote_plus
     from httplib import HTTPConnection, HTTPSConnection
@@ -118,7 +118,7 @@ class PlaySession(object):
             raise AlreadyLoggedIn
 
         self.client = ClientLogin(email, password, 'sj')
-        tokenauth = TokenAuth('sj', self.PLAY_URL, 'jumper')
+        tokenauth = TokenAuth('sj', self.PLAY_URL, 'gmusicapi')
 
         if self.client.get_auth_token() is None:
             return False
@@ -182,6 +182,63 @@ class PlaySession(object):
             response = opener.open(url)
 
         return response
+
+
+    def request(self, url, data=None, headers={}):
+        """
+        Makes a Skyjam service API request, and return the JSON response data.
+
+        :param url: The URL to request.
+        :param data: Data to be encoded and send as a POST body.
+        :param headers: HTTP headers to be send along with this request.
+        """
+        if not data:
+            data = None
+        else:
+            data = urlencode(data)
+            data = data.encode('utf8')
+
+        if not 'Content-Type' in headers:
+            headers['Content-Type'] = 'application/json'
+        headers['Authorization'] = 'GoogleLogin auth=%s' % self.client.get_auth_token()
+
+        req = Request(url, data, headers)
+        err = None
+
+        try:
+            resp_obj = urlopen(req)
+        except HTTPError as e:
+            err = e.code
+            return err, e.read()
+        resp = resp_obj.read()
+        resp_obj.close()
+        return None, unistr(resp, encoding='utf8')
+
+
+    def audio_request(self, url, headers={}):
+        """
+        Makes an audio data request, and return the stream as MP3 data.
+
+        :param url: The URL of the audio stream to request.
+        :param headers: HTTP headers to be send along with this request.
+        """
+        if not 'Content-Type' in headers:
+            headers['Content-Type'] = 'audio/mp3'
+        headers['Authorization'] = 'GoogleLogin auth=%s' % self.client.get_auth_token()
+
+        opener = build_opener(HTTPCookieProcessor(self.cookies))
+        req = Request(url, None, headers)
+        err = None
+
+        try:
+            resp_obj = opener.open(req)
+        except HTTPError as e:
+            err = e.code
+            return err, e.read()
+        resp = resp_obj.read()
+        resp_obj.close()
+
+        return None, resp
 
 
     def post_protobuf(self, path, protobuf):
